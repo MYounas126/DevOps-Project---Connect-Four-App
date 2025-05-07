@@ -1,19 +1,17 @@
 pipeline {
     agent any
     environment {
-        DOCKER_IMAGE = 'younas126/connect-four-deployment'  // Your Docker Hub repository
+        DOCKER_IMAGE = 'younas126/connect-four-deployment'
         K8S_NAMESPACE = 'default'
     }
     
     stages {
-        // Stage 1: Clean workspace
         stage('Clean Workspace') {
             steps {
                 cleanWs()
             }
         }
 
-        // Stage 2: Verify tools including Trivy
         stage('Verify Tools') {
             steps {
                 script {
@@ -21,10 +19,11 @@ pipeline {
                         bat 'docker --version'
                         bat 'kubectl version --client'
                         bat 'java -version'
-                        // Check if Trivy is installed
-                        def trivyInstalled = bat(returnStatus: true, script: 'trivy --version') == 0
+                        // Make Trivy check optional
+                        def trivyInstalled = bat(returnStatus: true, script: 'trivy --version || echo "Trivy not found"') == 0
                         if (!trivyInstalled) {
-                            error("Trivy is not installed. Please install Trivy on the Jenkins agent.")
+                            echo "WARNING: Trivy is not installed. Image scanning will be skipped."
+                            env.SKIP_TRIVY = 'true'
                         }
                     } catch (Exception e) {
                         error("Required tools verification failed: ${e.getMessage()}")
@@ -33,7 +32,6 @@ pipeline {
             }
         }
 
-        // Stage 3: Checkout code
         stage('Checkout Code') {
             steps {
                 git branch: 'main', 
@@ -41,7 +39,6 @@ pipeline {
             }
         }
 
-        // Stage 4: Build Docker image
         stage('Build Docker Image') {
             steps {
                 script {
@@ -54,8 +51,10 @@ pipeline {
             }
         }
 
-        // Stage 5: Scan image (now with better error handling)
         stage('Scan Docker Image') {
+            when {
+                expression { env.SKIP_TRIVY != 'true' }
+            }
             steps {
                 script {
                     try {
@@ -63,14 +62,11 @@ pipeline {
                         archiveArtifacts artifacts: 'trivy-scan.txt', allowEmptyArchive: true
                     } catch (Exception e) {
                         echo "WARNING: Trivy scan failed - ${e.getMessage()}"
-                        // Continue pipeline despite scan failure
-                        // You could also use 'error()' here if you want to fail the build
                     }
                 }
             }
         }
 
-        // Stage 6: Push to Docker Hub
         stage('Push to Docker Hub') {
             steps {
                 script {
@@ -94,7 +90,6 @@ pipeline {
             }
         }
 
-        // Stage 7: Deploy to Kubernetes
         stage('Deploy to Kubernetes') {
             steps {
                 script {
@@ -115,23 +110,19 @@ pipeline {
 
     post {
         always {
-            // Clean up Docker images
             script {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     bat 'docker rmi %DOCKER_IMAGE%:latest || echo "Image already removed"'
                 }
-            }
-            
-            // Email notification with better error handling
-            script {
+                
+                // Improved email notification with SMTP configuration check suggestion
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     emailext (
                         subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
                         body: """
                             <p>Build Status: <strong>${currentBuild.currentResult}</strong></p>
-                            <p>Docker Image: ${env.DOCKER_IMAGE}:latest</p>
-                            <p>Console: <a href="${env.BUILD_URL}">${env.JOB_NAME} #${env.BUILD_NUMBER}</a></p>
-                            ${currentBuild.currentResult == 'FAILURE' ? '<p>Failure Reason: Check console output for details</p>' : ''}
+                            <p>Check console output at: <a href="${env.BUILD_URL}">${env.JOB_NAME} #${env.BUILD_NUMBER}</a></p>
+                            ${currentBuild.currentResult == 'FAILURE' ? '<p>NOTE: If this failure was due to missing Trivy, please install it on the Jenkins agent</p>' : ''}
                         """,
                         to: 'younasrazakhan786@gmail.com',
                         attachmentsPattern: 'trivy-scan.txt',
