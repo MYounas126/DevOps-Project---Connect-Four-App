@@ -2,17 +2,16 @@ pipeline {
     agent any
     
     tools {
-        jdk 'JDK17'  // Make sure this tool is configured in Jenkins
-        nodejs 'NodeJS16'  // Make sure this tool is configured in Jenkins
-        // Comment out sonar-scanner if not needed or configure it in Jenkins
-        // sonarScanner 'sonar-scanner' 
+        jdk 'JDK17'
+        nodejs 'NodeJS16'
     }
     
     environment {
         DOCKER_IMAGE = 'younas126/connect-four-deployment'
         K8S_NAMESPACE = 'default'
-        // Only set SCANNER_HOME if you have SonarQube configured
-        // SCANNER_HOME = tool 'sonar-scanner'
+        AWS_ACCOUNT_ID = '123456789012' // Replace with your AWS account ID
+        AWS_REGION = 'us-east-1' // Replace with your AWS region
+        ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/connect-four"
     }
     
     stages {
@@ -29,8 +28,8 @@ pipeline {
                         bat 'docker --version'
                         bat 'kubectl version --client'
                         bat 'java -version'
+                        bat 'aws --version || echo "AWS CLI not found"'
                         
-                        // Make Trivy check optional
                         def trivyInstalled = bat(returnStatus: true, script: 'trivy --version || echo "Trivy not found"') == 0
                         if (!trivyInstalled) {
                             echo "WARNING: Trivy is not installed. Image scanning will be skipped."
@@ -50,29 +49,12 @@ pipeline {
             }
         }
 
-        /* Comment out SonarQube stages if not needed
-        stage('Sonarqube Analysis') {
-            steps {
-                withSonarQubeEnv('sonar-server') {
-                    bat 'sonar-scanner -Dsonar.projectName=connect-four -Dsonar.projectKey=connect-four'
-                }
-            }
-        }
-        
-        stage('Quality Gate') {
-            steps {
-                script {
-                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
-                }
-            }
-        }
-        */
-
         stage('Build Docker Image') {
             steps {
                 script {
                     try {
                         bat 'docker build -t %DOCKER_IMAGE%:latest .'
+                        bat "docker tag %DOCKER_IMAGE%:latest ${ECR_REPO}:latest"
                     } catch (Exception e) {
                         error("Docker build failed: ${e.getMessage()}")
                     }
@@ -96,48 +78,46 @@ pipeline {
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Push to AWS ECR') {
             steps {
                 script {
                     try {
-                        withCredentials([[
-                            $class: 'UsernamePasswordMultiBinding',
-                            credentialsId: 'docker-hub-creds',
-                            usernameVariable: 'DOCKER_USER',
-                            passwordVariable: 'DOCKER_PASS'
-                        ]]) {
-                            bat """
-                                docker login -u %DOCKER_USER% -p %DOCKER_PASS%
-                                docker push %DOCKER_IMAGE%:latest
-                                docker logout
-                            """
+                        withAWS(credentials: 'aws-creds', region: "${AWS_REGION}") {
+                            // Login to ECR
+                            bat "aws ecr get-login-password | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                            
+                            // Create ECR repository if not exists
+                            bat "aws ecr describe-repositories --repository-names connect-four || aws ecr create-repository --repository-name connect-four"
+                            
+                            // Push to ECR
+                            bat "docker push ${ECR_REPO}:latest"
                         }
                     } catch (Exception e) {
-                        error("Docker push failed: ${e.getMessage()}")
+                        error("ECR push failed: ${e.getMessage()}")
                     }
                 }
             }
         }
 
-        stage('Deploy to Kubernetes') {
+        stage('Deploy to EKS') {
             steps {
                 script {
-                    // First verify kubectl is working
-                    bat 'kubectl version --client'
-            
-                    // Then try to apply your manifests
-                     bat 'kubectl apply -f manifests/'
-                     bat 'kubectl get services'
-                    /*try {
-                        withKubeConfig([
-                            credentialsId: 'k8s-config',
-                            serverUrl: ''
-                        ]) {
+                    try {
+                        withAWS(credentials: 'aws-creds', region: "${AWS_REGION}") {
+                            // Update kubeconfig for EKS cluster
+                            bat 'aws eks update-kubeconfig --name YOUR_EKS_CLUSTER_NAME --region ${AWS_REGION}'
+                            
+                            // Verify cluster access
+                            bat 'kubectl cluster-info'
+                            
+                            // Deploy Kubernetes manifests
                             bat 'kubectl apply -f manifests/'
+                            bat 'kubectl get pods'
+                            bat 'kubectl get services'
                         }
                     } catch (Exception e) {
-                        error("Kubernetes deployment failed: ${e.getMessage()}")
-                    }*/
+                        error("EKS deployment failed: ${e.getMessage()}")
+                    }
                 }
             }
         }
@@ -146,26 +126,22 @@ pipeline {
     post {
         always {
             script {
-                // Only try to clean up if we're in a node context
-                if (env.NODE_NAME != null) {
-                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                        bat 'docker rmi %DOCKER_IMAGE%:latest || echo "Image already removed"'
-                    }
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    bat "docker rmi %DOCKER_IMAGE%:latest || echo 'Image already removed'"
+                    bat "docker rmi ${ECR_REPO}:latest || echo 'ECR image already removed'"
                 }
                 
-                // Improved email notification
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    emailext (
-                        subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
-                        body: """
-                            <p>Build Status: <strong>${currentBuild.currentResult}</strong></p>
-                            <p>Check console output at: <a href="${env.BUILD_URL}">${env.JOB_NAME} #${env.BUILD_NUMBER}</a></p>
-                        """,
-                        to: 'younasrazakhan786@gmail.com',
-                        attachmentsPattern: 'trivy-scan.txt',
-                        mimeType: 'text/html'
-                    )
-                }
+                emailext (
+                    subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
+                    body: """
+                        <p>Build Status: <strong>${currentBuild.currentResult}</strong></p>
+                        <p>AWS ECR Image: ${ECR_REPO}:latest</p>
+                        <p>Console: <a href="${env.BUILD_URL}">${env.JOB_NAME} #${env.BUILD_NUMBER}</a></p>
+                    """,
+                    to: 'younasrazakhan786@gmail.com',
+                    attachmentsPattern: 'trivy-scan.txt',
+                    mimeType: 'text/html'
+                )
             }
         }
     }
