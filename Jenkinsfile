@@ -122,7 +122,13 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    try {
+                    // First verify kubectl is working
+                    bat 'kubectl version --client'
+            
+                    // Then try to apply your manifests
+                     bat 'kubectl apply -f manifests/'
+                     bat 'kubectl get services'
+                    /*try {
                         withKubeConfig([
                             credentialsId: 'k8s-config',
                             serverUrl: ''
@@ -131,7 +137,7 @@ pipeline {
                         }
                     } catch (Exception e) {
                         error("Kubernetes deployment failed: ${e.getMessage()}")
-                    }
+                    }*/
                 }
             }
         }
