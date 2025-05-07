@@ -102,7 +102,7 @@ pipeline {
                             bat "aws ecr get-login-password | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
                             
                             // Create ECR repository if not exists
-                            bat "aws ecr describe-repositories --repository-names connect-four || aws ecr create-repository --repository-name connect-four"
+                            bat "aws ecr describe-repositories --repository-names connect-four-deployment || aws ecr create-repository --repository-name connect-four-deployment"
                             
                             // Push to ECR
                             bat "docker push ${ECR_REPO}:latest"
