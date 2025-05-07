@@ -1,8 +1,8 @@
 pipeline {
     agent any
     tools {
-        jdk 'jdk17'       // Make sure this matches exact name in Jenkins Global Tools
-        nodejs 'node16'   // Make sure this matches exact name in Jenkins Global Tools
+        jdk 'JDK17'       // Make sure this matches exact name in Jenkins Global Tools
+        nodejs 'NodeJS16'   // Make sure this matches exact name in Jenkins Global Tools
     }
     environment {
         DOCKER_IMAGE = 'younas126/connect-four-deployment'  // Changed to your Docker Hub account
