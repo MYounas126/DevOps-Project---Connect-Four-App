@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connect-four-app-deployment
+spec:
+  replicas: 3  # Number of desired replicas
+  selector:
+    matchLabels:
+      app: connect-four-app
+  template:
+    metadata:
+      labels:
+        app: connect-four-app
+    spec:
+      containers:
+      - name: connect-four-app
+        image: younas126/connect-four-app:latest
+        ports:
+        - containerPort: 5000
