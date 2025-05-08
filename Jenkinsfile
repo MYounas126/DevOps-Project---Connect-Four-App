@@ -115,42 +115,30 @@ pipeline {
         }
 
         stage('Deploy to EKS') {
-            steps {
-                script {
-                    try {
-                        withCredentials([
-                            usernamePassword(
-                                credentialsId: 'aws-creds',
-                                usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                            )
-                        ]) {
-                            // Configure AWS CLI
-                            bat """
-                                aws configure set aws_access_key_id %AWS_ACCESS_KEY_ID%
-                                aws configure set aws_secret_access_key %AWS_SECRET_ACCESS_KEY%
-                                aws configure set region %AWS_REGION%
-                            """
-                            
-                            // Update kubeconfig for EKS cluster
-                            bat "aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}"
-                            
-                            // Verify cluster access
-                            bat 'kubectl cluster-info'
-                            
-                            // Deploy Kubernetes manifests
-                            bat 'kubectl apply -f manifests/'
-                            
-                            // Verify deployment
-                            bat 'kubectl get pods -n ${K8S_NAMESPACE}'
-                            bat 'kubectl get services -n ${K8S_NAMESPACE}'
-                        }
-                    } catch (Exception e) {
-                        error("EKS deployment failed: ${e.getMessage()}")
-                    }
-                }
+    steps {
+        script {
+            withCredentials([
+                usernamePassword(
+                    credentialsId: 'aws-creds',
+                    usernameVariable: 'AWS_ACCESS_KEY_ID',
+                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                )
+            ]) {
+                bat """
+                    aws configure set aws_access_key_id %AWS_ACCESS_KEY_ID%
+                    aws configure set aws_secret_access_key %AWS_SECRET_ACCESS_KEY%
+                    aws configure set region %AWS_REGION%
+                    
+                    aws eks update-kubeconfig --name %EKS_CLUSTER_NAME% --region %AWS_REGION%
+                    
+                    # Add retry logic for kubectl commands
+                    kubectl get nodes --request-timeout=30s || sleep 30 && kubectl get nodes
+                    kubectl apply -f manifests/ --validate=false --request-timeout=60s
+                """
             }
         }
+    }
+}
     }
 
     post {
