@@ -9,10 +9,14 @@ pipeline {
     environment {
         DOCKER_IMAGE = 'younas126/connect-four-deployment'
         K8S_NAMESPACE = 'default'
-        AWS_ACCOUNT_ID = '248189939260' // Replace with your AWS account ID
-        AWS_REGION = 'us-east-1' // Replace with your AWS region
+        AWS_ACCOUNT_ID = '248189939260'
+        AWS_REGION = 'us-east-1'
         ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/connect-four-deployment"
-        EKS_CLUSTER_NAME = 'App-Cluster' // Replace with your EKS cluster name
+        EKS_CLUSTER_NAME = 'App-Cluster'
+        DEPLOYMENT_FILE = 'manifests/app-deploy.yaml'
+        SERVICE_FILE = 'manifests/app-svc.yaml'
+        MAX_RETRIES = 3
+        RETRY_DELAY = 30 // seconds
     }
     
     stages {
@@ -83,7 +87,6 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Using withCredentials instead of withAWS
                         withCredentials([
                             usernamePassword(
                                 credentialsId: 'aws-creds',
@@ -91,21 +94,17 @@ pipeline {
                                 passwordVariable: 'AWS_SECRET_ACCESS_KEY'
                             )
                         ]) {
-                            // Configure AWS CLI
                             bat """
                                 aws configure set aws_access_key_id %AWS_ACCESS_KEY_ID%
                                 aws configure set aws_secret_access_key %AWS_SECRET_ACCESS_KEY%
                                 aws configure set region %AWS_REGION%
+                                
+                                aws ecr get-login-password | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+                                
+                                aws ecr describe-repositories --repository-names connect-four-deployment || aws ecr create-repository --repository-name connect-four-deployment
+                                
+                                docker push ${ECR_REPO}:latest
                             """
-                            
-                            // Login to ECR
-                            bat "aws ecr get-login-password | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-                            
-                            // Create ECR repository if not exists
-                            bat "aws ecr describe-repositories --repository-names connect-four-deployment || aws ecr create-repository --repository-name connect-four-deployment"
-                            
-                            // Push to ECR
-                            bat "docker push ${ECR_REPO}:latest"
                         }
                     } catch (Exception e) {
                         error("ECR push failed: ${e.getMessage()}")
@@ -114,50 +113,96 @@ pipeline {
             }
         }
 
-        stage('Deploy to EKS') {
-    steps {
-        script {
-            withCredentials([
-                usernamePassword(
-                    credentialsId: 'aws-creds',
-                    usernameVariable: 'AWS_ACCESS_KEY_ID',
-                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                )
-            ]) {
-                bat """
-                    aws configure set aws_access_key_id %AWS_ACCESS_KEY_ID%
-                    aws configure set aws_secret_access_key %AWS_SECRET_ACCESS_KEY%
-                    aws configure set region %AWS_REGION%
-                    
-                    aws eks update-kubeconfig --name %EKS_CLUSTER_NAME% --region %AWS_REGION%
-                    
-                    # Add retry logic for kubectl commands
-                    kubectl get nodes --request-timeout=30s || sleep 30 && kubectl get nodes
-                    kubectl apply -f manifests/ --validate=false --request-timeout=60s
-                """
+        stage('Verify Kubernetes Access') {
+            steps {
+                script {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'aws-creds',
+                            usernameVariable: 'AWS_ACCESS_KEY_ID',
+                            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                        )
+                    ]) {
+                        retry(env.MAX_RETRIES) {
+                            bat """
+                                aws eks update-kubeconfig --name %EKS_CLUSTER_NAME% --region %AWS_REGION%
+                                kubectl cluster-info
+                                kubectl get nodes --request-timeout=60s
+                            """
+                            sleep env.RETRY_DELAY.toInteger()
+                        }
+                    }
+                }
             }
         }
-    }
-}
+
+        stage('Deploy to EKS') {
+            steps {
+                script {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'aws-creds',
+                            usernameVariable: 'AWS_ACCESS_KEY_ID',
+                            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                        )
+                    ]) {
+                        retry(env.MAX_RETRIES) {
+                            bat """
+                                # Apply Kubernetes manifests with validation disabled
+                                kubectl apply -f ${DEPLOYMENT_FILE} --validate=false --request-timeout=120s
+                                kubectl apply -f ${SERVICE_FILE} --validate=false --request-timeout=120s
+                                
+                                # Verify deployment
+                                kubectl rollout status deployment/connectfour-deployment -n ${K8S_NAMESPACE} --timeout=180s
+                                
+                                # Get service details
+                                kubectl get svc -n ${K8S_NAMESPACE}
+                            """
+                            sleep env.RETRY_DELAY.toInteger()
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                script {
+                    bat """
+                        kubectl get pods -n ${K8S_NAMESPACE} -o wide
+                        kubectl get svc -n ${K8S_NAMESPACE} -o wide
+                    """
+                }
+            }
+        }
     }
 
     post {
         always {
             script {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    bat "docker rmi %DOCKER_IMAGE%:latest || echo 'Image already removed'"
-                    bat "docker rmi ${ECR_REPO}:latest || echo 'ECR image already removed'"
+                    bat """
+                        docker rmi %DOCKER_IMAGE%:latest || echo 'Image already removed'
+                        docker rmi ${ECR_REPO}:latest || echo 'ECR image already removed'
+                    """
+                    
+                    // Archive deployment logs
+                    bat "kubectl get all -n ${K8S_NAMESPACE} > k8s-status.txt"
+                    archiveArtifacts artifacts: 'k8s-status.txt', allowEmptyArchive: true
                 }
                 
                 emailext (
                     subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
                     body: """
-                        <p>Build Status: <strong>${currentBuild.currentResult}</strong></p>
-                        <p>AWS ECR Image: ${ECR_REPO}:latest</p>
-                        <p>Console: <a href="${env.BUILD_URL}">${env.JOB_NAME} #${env.BUILD_NUMBER}</a></p>
+                        <h2>Deployment Summary</h2>
+                        <p><strong>Status:</strong> ${currentBuild.currentResult}</p>
+                        <p><strong>ECR Image:</strong> ${ECR_REPO}:latest</p>
+                        <p><strong>EKS Cluster:</strong> ${EKS_CLUSTER_NAME}</p>
+                        <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.JOB_NAME} #${env.BUILD_NUMBER}</a></p>
+                        ${currentBuild.currentResult == 'FAILURE' ? '<p style="color:red;">Check the build logs for deployment errors</p>' : ''}
                     """,
                     to: 'younasrazakhan786@gmail.com',
-                    attachmentsPattern: 'trivy-scan.txt',
+                    attachmentsPattern: 'trivy-scan.txt, k8s-status.txt',
                     mimeType: 'text/html'
                 )
             }
