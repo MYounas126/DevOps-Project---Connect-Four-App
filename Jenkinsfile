@@ -1,211 +1,287 @@
 pipeline {
     agent any
-    
     tools {
         jdk 'JDK17'
         nodejs 'NodeJS16'
     }
-    
     environment {
-        DOCKER_IMAGE = 'younas126/connect-four-deployment'
-        K8S_NAMESPACE = 'default'
-        AWS_ACCOUNT_ID = '248189939260'
-        AWS_REGION = 'us-east-1'
-        ECR_REPO = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/connect-four-deployment"
-        EKS_CLUSTER_NAME = 'App-Cluster'
-        DEPLOYMENT_FILE = 'manifests/app-deploy.yaml'
-        SERVICE_FILE = 'manifests/app-svc.yaml'
-        MAX_RETRIES = 3
-        RETRY_DELAY = 30 // seconds
+        SCANNER_HOME = tool 'sonar-scanner'
     }
-    
     stages {
-        stage('Clean Workspace') {
+        stage('clean workspace') {
             steps {
                 cleanWs()
             }
         }
-
-        stage('Verify Tools') {
+        
+        stage('Unit Tests') {
             steps {
-                script {
-                    try {
-                        bat 'docker --version'
-                        bat 'kubectl version --client'
-                        bat 'java -version'
-                        bat 'aws --version || echo "AWS CLI not found"'
-                        
-                        def trivyInstalled = bat(returnStatus: true, script: 'trivy --version || echo "Trivy not found"') == 0
-                        if (!trivyInstalled) {
-                            echo "WARNING: Trivy is not installed. Image scanning will be skipped."
-                            env.SKIP_TRIVY = 'true'
-                        }
-                    } catch (Exception e) {
-                        error("Required tools verification failed: ${e.getMessage()}")
+                sh 'jenkins --version'
+                sh 'aws --version'
+                sh 'kubectl version --client'
+                sh 'terraform --version'
+                sh 'trivy --version'
+                sh 'docker --version'
+            }
+        }
+        
+        stage('Checkout from Git') {                        
+            steps {                                       
+                git branch: 'main', url: 'https://github.com/MYounas126/Connect-Four-Deployment.git'
+            }
+        }
+        
+        stage('Deployments') {
+            parallel {
+                stage('Test deploy to staging') {
+                    steps {
+                        echo 'staging deployment done'
+                    }
+                }
+                stage('Test deploy to production') {
+                    steps {
+                        echo 'production deployment done'
                     }
                 }
             }
         }
-
-        stage('Checkout Code') {
+        
+        stage('Test Build') {
             steps {
-                git branch: 'main', 
-                url: 'https://github.com/MYounas126/DevOps-Project---Connect-Four-App.git'
+                echo 'Building....'
             }
         }
-
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    try {
-                        bat 'docker build -t %DOCKER_IMAGE%:latest .'
-                        bat "docker tag %DOCKER_IMAGE%:latest ${ECR_REPO}:latest"
-                    } catch (Exception e) {
-                        error("Docker build failed: ${e.getMessage()}")
-                    }
-                }
-            }
-        }
-
-        stage('Scan Docker Image') {
+        
+        stage('Deploy to Staging') {
             when {
-                expression { env.SKIP_TRIVY != 'true' }
+                branch 'main'
             }
             steps {
+                echo 'Deploying to Staging from main....'
+            }
+        }
+        
+        stage('Deploy to Production') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo 'Deploying to Production from main....'
+            }
+        }
+        
+        stage("Sonarqube Analysis") {                         
+            steps {
+                withSonarQubeEnv('sonar-server') {
+                    sh '''$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=gaming-application \
+                    -Dsonar.projectKey=gaming-application'''
+                }
+            }
+        }
+        
+        stage("quality gate") {
+            steps {
                 script {
-                    try {
-                        bat 'trivy image --exit-code 0 --severity HIGH,CRITICAL --format table -o trivy-scan.txt %DOCKER_IMAGE%:latest'
-                        archiveArtifacts artifacts: 'trivy-scan.txt', allowEmptyArchive: true
-                    } catch (Exception e) {
-                        echo "WARNING: Trivy scan failed - ${e.getMessage()}"
+                    waitForQualityGate abortPipeline: false, credentialsId: 'Sonar-token'
+                }
+            }
+        }
+        
+        stage('Install Dependencies') {
+            steps {
+                sh "npm install"
+            }
+        }
+        
+        stage('OWASP File System SCAN') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        
+        stage('TRIVY File System SCAN') {
+            steps {
+                sh "trivy fs . > trivyfs.txt"
+            }
+        }
+        
+        stage('Docker Scout Image Overview') {
+            steps {
+                script {
+                   withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                       sh 'docker-scout quickview fs://.'
+                   }
+                }   
+            }
+        }
+        
+        stage('Docker Scout CVES File System Scan') {
+            steps {
+                script {
+                   withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                       sh 'docker-scout cves fs://.'
+                   }
+                }   
+            }
+        }
+        
+        stage("Docker Image Building") {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {   
+                        sh "docker build -t connectfour ." 
                     }
                 }
             }
         }
-
-        stage('Push to AWS ECR') {
+        
+        stage("Docker Image Tagging") {
             steps {
                 script {
-                    try {
-                        withCredentials([
-                            usernamePassword(
-                                credentialsId: 'aws-creds',
-                                usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                            )
-                        ]) {
-                            bat """
-                                aws configure set aws_access_key_id %AWS_ACCESS_KEY_ID%
-                                aws configure set aws_secret_access_key %AWS_SECRET_ACCESS_KEY%
-                                aws configure set region %AWS_REGION%
-                                
-                                aws ecr get-login-password | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
-                                
-                                aws ecr describe-repositories --repository-names connect-four-deployment || aws ecr create-repository --repository-name connect-four-deployment
-                                
-                                docker push ${ECR_REPO}:latest
-                            """
-                        }
-                    } catch (Exception e) {
-                        error("ECR push failed: ${e.getMessage()}")
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh "docker tag connectfour yash5090/connectfour:latest" 
                     }
                 }
             }
         }
-
-        stage('Verify Kubernetes Access') {
+        
+        stage('Docker Image Scanning') { 
+            steps { 
+                sh "trivy image --format table -o trivy-image-report.html yash5090/connectfour:latest" 
+            } 
+        } 
+        
+        stage("Image Push to DockerHub") {
             steps {
                 script {
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: 'aws-creds',
-                            usernameVariable: 'AWS_ACCESS_KEY_ID',
-                            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                        )
-                    ]) {
-                        retry(env.MAX_RETRIES) {
-                            bat """
-                                aws eks update-kubeconfig --name %EKS_CLUSTER_NAME% --region %AWS_REGION%
-                                kubectl cluster-info
-                                kubectl get nodes --request-timeout=60s
-                            """
-                            sleep env.RETRY_DELAY.toInteger()
-                        }
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                        sh "docker push yash5090/connectfour:latest"
                     }
                 }
             }
         }
-
-        stage('Deploy to EKS') {
+        
+        stage('Docker Scout Image Scanning') {
             steps {
                 script {
-                    withCredentials([
-                        usernamePassword(
-                            credentialsId: 'aws-creds',
-                            usernameVariable: 'AWS_ACCESS_KEY_ID',
-                            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                        )
-                    ]) {
-                        retry(env.MAX_RETRIES) {
-                            bat """
-                                # Apply Kubernetes manifests with validation disabled
-                                kubectl apply -f ${DEPLOYMENT_FILE} --validate=false --request-timeout=120s
-                                kubectl apply -f ${SERVICE_FILE} --validate=false --request-timeout=120s
-                                
-                                # Verify deployment
-                                kubectl rollout status deployment/connectfour-deployment -n ${K8S_NAMESPACE} --timeout=180s
-                                
-                                # Get service details
-                                kubectl get svc -n ${K8S_NAMESPACE}
-                            """
-                            sleep env.RETRY_DELAY.toInteger()
-                        }
+                   withDockerRegistry(credentialsId: 'docker', toolName: 'docker') {
+                       sh 'docker-scout quickview yash5090/connectfour:latest'
+                       sh 'docker-scout cves yash5090/connectfour:latest'
+                       sh 'docker-scout recommendations yash5090/connectfour:latest'
+                       sh 'docker-scout attestation yash5090/connectfour:latest'
+                   }
+                }   
+            }
+        }
+        
+        stage("TRIVY") {
+            steps {
+                sh "trivy image yash5090/connectfour:latest > trivyimage.txt"   
+            }
+        }
+        
+        stage('Manual Approval') {
+          steps {
+           script {
+             timeout(time: 10, unit: 'MINUTES') {
+              approvalMailContent = """
+              Project: ${env.JOB_NAME}
+              Build Number: ${env.BUILD_NUMBER}
+              Go to build URL and approve the deployment request.
+              URL de build: ${env.BUILD_URL}
+              """
+              emailext (
+                to: 'younasrazakhan786@gmail.com',
+                subject: "Approval Required: ${env.JOB_NAME} - Build ${env.BUILD_NUMBER}", 
+                body: approvalMailContent,
+                mimeType: 'text/plain'
+              )
+              input(
+                id: "DeployGate",
+                message: "Deploy to production?",
+                submitter: "approver",
+                parameters: [choice(name: 'action', choices: ['Approve', 'Reject'], description: 'Approve or reject deployment')]
+              )  
+             }
+           }
+          }
+        }
+
+        stage("Remove Docker Container") {
+            steps {
+                sh "docker stop connectfour || true"
+                sh "docker rm connectfour || true"
+             }
+        }
+        
+        stage('Deploy to Docker Container') {
+            steps {
+                sh 'docker run -d --name connectfour -p 5000:80 yash5090/connectfour:latest' 
+            }
+        }
+        
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'k8s', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
+                        sh 'kubectl apply -f deployment.yaml'
+                        sh 'kubectl apply -f service.yaml'
                     }
                 }
             }
         }
-
-        stage('Verify Deployment') {
+        
+        stage('Verify the Kubernetes Deployments') { 
+            steps { 
+                withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'k8s', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') { 
+                    sh "kubectl get all" 
+                    sh "kubectl get pods" 
+                    sh "kubectl get svc"
+                    sh "kubectl get ns"
+                } 
+            } 
+        } 
+        
+        stage('Deployment Done') {
             steps {
-                script {
-                    bat """
-                        kubectl get pods -n ${K8S_NAMESPACE} -o wide
-                        kubectl get svc -n ${K8S_NAMESPACE} -o wide
-                    """
-                }
+                echo 'Deployed Successfully...'
             }
         }
     }
-
-    post {
+    
+    post { 
         always {
-            script {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    bat """
-                        docker rmi %DOCKER_IMAGE%:latest || echo 'Image already removed'
-                        docker rmi ${ECR_REPO}:latest || echo 'ECR image already removed'
-                    """
-                    
-                    // Archive deployment logs
-                    bat "kubectl get all -n ${K8S_NAMESPACE} > k8s-status.txt"
-                    archiveArtifacts artifacts: 'k8s-status.txt', allowEmptyArchive: true
-                }
-                
+            script { 
+                def jobName = env.JOB_NAME 
+                def buildNumber = env.BUILD_NUMBER 
+                def pipelineStatus = currentBuild.result ?: 'SUCCESS' 
+                def bannerColor = pipelineStatus.toUpperCase() == 'SUCCESS' ? 'green' : 'red' 
+                def body = """ 
+                <html> 
+                <body> 
+                <div style="border: 4px solid ${bannerColor}; padding: 10px;"> 
+                <h2>${jobName} - Build ${buildNumber}</h2> 
+                <div style="background-color: ${bannerColor}; padding: 10px;"> 
+                <h3 style="color: white;">Pipeline Status: ${pipelineStatus.toUpperCase()}</h3> 
+                </div> 
+                <p>Check the <a href="${BUILD_URL}">console output</a>.</p> 
+                </div> 
+                </body> 
+                </html> 
+                """ 
+
                 emailext (
-                    subject: "${env.JOB_NAME} - Build #${env.BUILD_NUMBER} - ${currentBuild.currentResult}",
-                    body: """
-                        <h2>Deployment Summary</h2>
-                        <p><strong>Status:</strong> ${currentBuild.currentResult}</p>
-                        <p><strong>ECR Image:</strong> ${ECR_REPO}:latest</p>
-                        <p><strong>EKS Cluster:</strong> ${EKS_CLUSTER_NAME}</p>
-                        <p><strong>Build URL:</strong> <a href="${env.BUILD_URL}">${env.JOB_NAME} #${env.BUILD_NUMBER}</a></p>
-                        ${currentBuild.currentResult == 'FAILURE' ? '<p style="color:red;">Check the build logs for deployment errors</p>' : ''}
-                    """,
-                    to: 'younasrazakhan786@gmail.com',
-                    attachmentsPattern: 'trivy-scan.txt, k8s-status.txt',
-                    mimeType: 'text/html'
-                )
-            }
-        }
+                    attachLog: true,
+                    subject: "${jobName} - Build ${buildNumber} - ${pipelineStatus.toUpperCase()}", 
+                    body: body, 
+                    to: 'younasrazakhan786@gmail.com', 
+                    from: 'jenkins@example.com', 
+                    replyTo: 'jenkins@example.com', 
+                    mimeType: 'text/html', 
+                    attachmentsPattern: 'trivy-image-report.html, trivyfs.txt, trivyimage.txt'
+                ) 
+            } 
+        } 
     }
 }
