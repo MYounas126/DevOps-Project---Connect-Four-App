@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
     
@@ -84,7 +83,6 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Using withCredentials instead of withAWS
                         withCredentials([
                             usernamePassword(
                                 credentialsId: 'aws-creds',
@@ -92,20 +90,16 @@ pipeline {
                                 passwordVariable: 'AWS_SECRET_ACCESS_KEY'
                             )
                         ]) {
-                            // Configure AWS CLI
                             bat """
                                 aws configure set aws_access_key_id %AWS_ACCESS_KEY_ID%
                                 aws configure set aws_secret_access_key %AWS_SECRET_ACCESS_KEY%
                                 aws configure set region %AWS_REGION%
                             """
                             
-                            // Login to ECR
                             bat "aws ecr get-login-password | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
                             
-                            // Create ECR repository if not exists
                             bat "aws ecr describe-repositories --repository-names connect-four-deployment || aws ecr create-repository --repository-name connect-four-deployment"
                             
-                            // Push to ECR
                             bat "docker push ${ECR_REPO}:latest"
                         }
                     } catch (Exception e) {
@@ -115,31 +109,34 @@ pipeline {
             }
         }
 
-        stage('Deploy to EKS') {
-    steps {
-        script {
-            withCredentials([
-                usernamePassword(
-                    credentialsId: 'aws-creds',
-                    usernameVariable: 'AWS_ACCESS_KEY_ID',
-                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
-                )
-            ]) {
-                bat """
-                    aws configure set aws_access_key_id %AWS_ACCESS_KEY_ID%
-                    aws configure set aws_secret_access_key %AWS_SECRET_ACCESS_KEY%
-                    aws configure set region %AWS_REGION%
-                    
-                    aws eks update-kubeconfig --name %EKS_CLUSTER_NAME% --region %AWS_REGION%
-                    
-                    # Add retry logic for kubectl commands
-                    kubectl get nodes --request-timeout=30s || sleep 30 && kubectl get nodes
-                    kubectl apply -f manifests/ --validate=false --request-timeout=60s
-                """
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: 'aws-creds',
+                            usernameVariable: 'AWS_ACCESS_KEY_ID',
+                            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                        )
+                    ]) {
+                        bat """
+                            aws configure set aws_access_key_id %AWS_ACCESS_KEY_ID%
+                            aws configure set aws_secret_access_key %AWS_SECRET_ACCESS_KEY%
+                            aws configure set region %AWS_REGION%
+                            
+                            aws eks update-kubeconfig --name %EKS_CLUSTER_NAME% --region %AWS_REGION%
+                            
+                            kubectl get nodes --request-timeout=30s || sleep 30 && kubectl get nodes
+                            kubectl apply -f manifests/ --validate=false --request-timeout=60s
+                            
+                            # Verify deployment
+                            kubectl get pods -n %K8S_NAMESPACE%
+                            kubectl get svc -n %K8S_NAMESPACE%
+                        """
+                    }
+                }
             }
         }
-    }
-}
     }
 
     post {
@@ -155,6 +152,7 @@ pipeline {
                     body: """
                         <p>Build Status: <strong>${currentBuild.currentResult}</strong></p>
                         <p>AWS ECR Image: ${ECR_REPO}:latest</p>
+                        <p>Kubernetes Namespace: ${K8S_NAMESPACE}</p>
                         <p>Console: <a href="${env.BUILD_URL}">${env.JOB_NAME} #${env.BUILD_NUMBER}</a></p>
                     """,
                     to: 'younasrazakhan786@gmail.com',
