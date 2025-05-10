@@ -11,39 +11,39 @@
 
 ---
 
-## 📚 Table of Contents
+##  Table of Contents
 
-* [🎯 Project Overview](#-project-overview)
-* [🧠 Features](#-features)
-* [🧰 Tech Stack](#-tech-stack)
-* [📁 Folder Structure](#-folder-structure)
-* [⚙️ How to Run](#️-how-to-run)
-* [🔐 Security Integration](#-security-integration)
-* [📊 Monitoring](#-monitoring)
-* [📌 Future Improvements](#-future-improvements)
-* [📜 License](#-license)
-* [🤝 Contributors](#-contributors)
+* [ Project Overview](#-project-overview)
+* [ Features](#-features)
+* [ Tech Stack](#-tech-stack)
+* [ Folder Structure](#-folder-structure)
+* [ How to Run](#️-how-to-run)
+* [ Security Integration](#-security-integration)
+* [ Monitoring](#-monitoring)
+* [ Future Improvements](#-future-improvements)
+* [ License](#-license)
+* [ Contributors](#-contributors)
 
 ---
 
-## 🎯 Project Overview
+## Project Overview
 
 This project implements a complete **DevSecOps pipeline** for deploying a static **Connect Four game** built with HTML, CSS, and JavaScript. It automates the entire process from code push to deployment, while integrating **security scanning**, **infrastructure as code**, and **monitoring** into a single workflow.
 
 ---
 
-## 🧠 Features
+## Features
 
-* 🔄 **CI/CD Pipeline** with Jenkins
-* 🐳 **Dockerized** frontend application
-* ☁️ **AWS EKS provisioning** with Terraform
-* 🔐 Security Scans: Trivy, OWASP ZAP, KubeAudit
-* 🧠 Real-time **monitoring** via Prometheus & Grafana
-* 📬 **Email notifications** for pipeline status and alerts
+* **CI/CD Pipeline** with Jenkins
+* **Dockerized** frontend application
+* **AWS EKS provisioning** with Terraform
+*  **Security Scans** Trivy, OWASP ZAP, KubeAudit
+*  **Real-time **monitoring** via Prometheus & Grafana
+* **Email notifications** for pipeline status and alerts
 
 ---
 
-## 🧰 Tech Stack
+## Tech Stack
 
 | Category         | Technology                  |
 | ---------------- | --------------------------- |
@@ -58,7 +58,7 @@ This project implements a complete **DevSecOps pipeline** for deploying a static
 
 ---
 
-## 📁 Folder Structure
+## Folder Structure
 
 ```bash
 .
@@ -80,16 +80,16 @@ This project implements a complete **DevSecOps pipeline** for deploying a static
 
 ---
 
-## ⚙️ How to Run
+## How to Run
 
-### 🖥️ Local Installation
+### Local Installation
 ```bash
 docker build -t connect-four .
 docker run -d -p 8080:80 connect-four
 ```
 Access the game at: [http://localhost:8080](http://localhost:8080)
 
-### ☁️ Cloud Deployment on AWS EKS
+### Cloud Deployment on AWS EKS
 1. Provision EKS cluster:
 ```bash
 cd EKS-Terraform
@@ -114,7 +114,7 @@ kubectl get svc
 
 ---
 
-## 🔐 Security Integration
+## Security Integration
 
 ### Security Toolchain
 
@@ -135,7 +135,7 @@ Jenkins pipeline will automatically:
 
 ---
 
-## 📊 Monitoring
+## Monitoring
 
 ### Stack Components
 ```bash
@@ -160,7 +160,7 @@ password: prom-operator
 
 ---
 
-## 📌 Future Improvements
+## Future Improvements
 
 ```markdown
 - [ ] Implement RBAC policies for secure role-based access
@@ -173,7 +173,7 @@ password: prom-operator
 
 ---
 
-## 📜 License
+## License
 
 ```text
 MIT License
@@ -188,10 +188,9 @@ Permission is hereby granted... (full license text in LICENSE file)
 
 ---
 
-## 🤝 Contributors
+## Contributors
 
 ```bash
-# Student Contributors
 - Muhammad Younas (2022456)
 - Muhammad Umar Maqsood (2022447)
 ```
@@ -208,4 +207,4 @@ Key improvements made:
 7. Added sub-headers for complex sections
 8. Used proper markdown syntax for all elements
 
-Just copy this entire content into your README.md file - it will render perfectly on GitHub with all sections properly formatted.
+
