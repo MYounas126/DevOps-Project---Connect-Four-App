@@ -75,14 +75,3 @@ This project implements a complete **DevSecOps pipeline** for deploying a static
 ├── .github/workflows/              # GitHub Actions (optional)
 └── SECURITY.md                     # Security policy
 
-## How to Run
-
-### 🚀 Local Development
-
-To run the project locally:
-
-```bash
-docker build -t connect-four .
-docker run -d -p 8080:80 connect-four
-
-Visit: http://localhost:8080
