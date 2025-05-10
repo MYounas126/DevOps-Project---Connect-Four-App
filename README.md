@@ -1,6 +1,4 @@
-Here's the complete README with **all sections** properly formatted in consistent GitHub-flavored markdown:
 
-```markdown
 # DevSecOps Connect Four Deployment
 
 ![CI/CD](https://img.shields.io/badge/Jenkins-CI%2FCD-blue)
