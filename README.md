@@ -1,4 +1,4 @@
-# 🚀 DevSecOps Connect Four Deployment
+# DevSecOps Connect Four Deployment
 
 ![CI/CD](https://img.shields.io/badge/Jenkins-CI%2FCD-blue)
 ![Docker](https://img.shields.io/badge/Docker-Containerized-blue)
@@ -10,17 +10,17 @@
 
 ---
 
-## 📌 Table of Contents
+##  Table of Contents
 
-- [🎯 Project Overview](#-project-overview)
-- [🧠 Features](#-features)
-- [🧰 Tech Stack](#-tech-stack)
-- [📁 Folder Structure](#-folder-structure)
-- [⚙️ How to Run](#️-how-to-run)
-- [🔐 Security Integration](#-security-integration)
-- [📊 Monitoring](#-monitoring)
-- [📌 Future Improvements](#-future-improvements)
-- [📜 License](#-license)
+- [ Project Overview](#-project-overview)
+- [ Features](#-features)
+- [ Tech Stack](#-tech-stack)
+- [ Folder Structure](#-folder-structure)
+- [⚙ How to Run](#️-how-to-run)
+- [ Security Integration](#-security-integration)
+- [ Monitoring](#-monitoring)
+- [ Future Improvements](#-future-improvements)
+- [ License](#-license)
 
 ---
 
@@ -74,3 +74,15 @@ This project implements a complete **DevSecOps pipeline** for deploying a static
 │   └── outputs.tf
 ├── .github/workflows/              # GitHub Actions (optional)
 └── SECURITY.md                     # Security policy
+
+## How to Run
+
+### 🚀 Local Development
+
+To run the project locally:
+
+```bash
+docker build -t connect-four .
+docker run -d -p 8080:80 connect-four
+
+Visit: http://localhost:8080
