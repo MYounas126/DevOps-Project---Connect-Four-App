@@ -195,6 +195,4 @@ Permission is hereby granted... (full license text in LICENSE file)
 - Muhammad Umar Maqsood (2022447)
 ```
 
-```
-
 
